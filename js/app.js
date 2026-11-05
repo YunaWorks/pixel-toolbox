@@ -46,17 +46,25 @@
     return w + ' × ' + h;
   }
 
-  /** Runs `fn` once on the next animation frame, however often it is requested. */
+  /**
+   * Runs `fn` once on the next animation frame, however often it is requested.
+   * `.flush()` runs a pending call right away (used before exporting, so the
+   * export sees the latest input).
+   */
   function coalesce(fn) {
     let pending = false;
-    return function () {
+    function run() {
+      if (!pending) return;
+      pending = false;
+      fn();
+    }
+    function schedule() {
       if (pending) return;
       pending = true;
-      requestAnimationFrame(function () {
-        pending = false;
-        fn();
-      });
-    };
+      requestAnimationFrame(run);
+    }
+    schedule.flush = run;
+    return schedule;
   }
 
   // ------------------------------------------------------------ feature check
@@ -100,7 +108,9 @@
     try {
       return await png.decodePng(bytes);
     } catch (err) {
-      // Unusual or slightly damaged files: let the browser's own decoder try.
+      // A damaged file is refused: decoding it anyway could silently give wrong colours.
+      if (err.damaged) throw err;
+      // Other unusual files: let the browser's own decoder try.
       try {
         const image = await decodeWithBrowser(file);
         console.warn('Pixel Toolbox: used the browser decoder for ' + file.name + ':', err.message);
@@ -416,13 +426,18 @@
     return names[0] + ', ' + names[1] + ' … ' + names[names.length - 1];
   }
 
-  function disableSplitExport(label) {
-    S.exportBtn.disabled = true;
-    S.exportBtn.textContent = label || 'Download ZIP';
+  /** Sets the export button, unless an export is running (it shows progress then). */
+  function setSplitButton(count) {
+    if (splitState.exporting) return;
+    S.exportBtn.disabled = !count;
+    S.exportBtn.textContent = count ? 'Download ZIP (' + plural(count, 'file') + ')' : 'Download ZIP';
+  }
+
+  function disableSplitExport() {
+    setSplitButton(0);
   }
 
   function updateSplit() {
-    if (splitState.exporting) return;
     const read = readSplitOptions();
     splitState.plan = null;
     splitState.options = null;
@@ -487,10 +502,7 @@
       plan.frames.filter((f) => f.skipped).map((f) => f.cell)
     );
 
-    S.exportBtn.disabled = plan.exportCount === 0;
-    S.exportBtn.textContent = plan.exportCount
-      ? 'Download ZIP (' + plural(plan.exportCount, 'file') + ')'
-      : 'Download ZIP';
+    setSplitButton(plan.exportCount);
   }
 
   const scheduleSplit = coalesce(updateSplit);
@@ -510,14 +522,20 @@
     return { rect: c, text: text };
   };
 
+  // If several files are chosen quickly, only the last one counts, even when
+  // an earlier (bigger) file finishes decoding after it.
+  const decodeSheet = PT.takeLatest(readPng);
+
   async function loadSplitFile(file) {
-    let image;
+    let result;
     try {
-      image = await readPng(file);
+      result = await decodeSheet(file);
     } catch (err) {
       notify('Could not open “' + file.name + '”: ' + err.message, 'error');
       return;
     }
+    if (result.stale) return; // a newer file was chosen meanwhile
+    const image = result.value;
     splitState.image = image;
     splitState.fileName = file.name;
     S.cardName.textContent = file.name;
@@ -571,14 +589,19 @@
   });
 
   S.exportBtn.addEventListener('click', async function () {
-    const plan = splitState.plan;
-    if (!plan || splitState.exporting) return;
+    scheduleSplit.flush();
+    if (!splitState.plan || splitState.exporting) return;
+    // Everything the export needs is taken now: loading another sheet or
+    // changing settings while it runs does not affect this ZIP.
+    const image = splitState.image;
+    const options = splitState.options;
+    const zipName = split.sanitizeFileName(baseName(splitState.fileName)) + '_frames.zip';
     splitState.exporting = true;
     S.exportBtn.disabled = true;
     S.exportBtn.textContent = 'Preparing…';
     let last = 0;
     try {
-      const result = await split.buildSplitZip(splitState.image, splitState.options, {
+      const result = await split.buildSplitZip(image, options, {
         onProgress: function (done, total) {
           const now = performance.now();
           if (now - last > 60 || done === total) {
@@ -587,7 +610,6 @@
           }
         },
       });
-      const zipName = split.sanitizeFileName(baseName(splitState.fileName)) + '_frames.zip';
       saveFile(result.zip, zipName, 'application/zip');
       notify('Saved ' + plural(result.names.length, 'frame') + ' to ' + zipName + '.');
     } catch (err) {
@@ -618,7 +640,9 @@
     exportJson: $('#merge-export-json'),
   };
   const mergeStage = new Stage(M.stageRoot);
-  const mergeState = { items: [], nextId: 1, result: null, pngBytes: null, encoding: false };
+  const mergeState = { items: [], nextId: 1, result: null, locked: false, stale: false, idle: Promise.resolve(), release: null };
+  // The PNG and the JSON are made from the same sheet; see merge.createExportSession.
+  const exportSession = merge.createExportSession(png.encodePng);
 
   function makeThumb(image) {
     const canvas = document.createElement('canvas');
@@ -646,6 +670,7 @@
     const list = Array.from(files || []);
     if (!list.length) return;
     const settled = await Promise.allSettled(list.map(readPng));
+    while (mergeState.locked) await mergeState.idle; // don't change the frames mid-export
     const added = [];
     const failed = [];
     settled.forEach(function (r, i) {
@@ -691,12 +716,36 @@
     });
     M.list.replaceChildren.apply(M.list, tiles);
     M.count.textContent = String(items.length);
-    M.sort.disabled = items.length < 2;
-    M.clear.disabled = items.length === 0;
+    syncFrameButtons();
     if (focusId !== undefined) {
       const tile = M.list.querySelector('[data-id="' + focusId + '"]');
       if (tile) tile.focus();
     }
+  }
+
+  function syncFrameButtons() {
+    M.sort.disabled = mergeState.locked || mergeState.items.length < 2;
+    M.clear.disabled = mergeState.locked || mergeState.items.length === 0;
+  }
+
+  /**
+   * Locks everything that changes the sheet while a PNG export runs, so the
+   * PNG and the JSON can't end up describing different layouts.
+   */
+  function setMergeLocked(locked) {
+    mergeState.locked = locked;
+    if (locked) {
+      mergeState.idle = new Promise(function (resolve) { mergeState.release = resolve; });
+    } else if (mergeState.release) {
+      mergeState.release();
+      mergeState.release = null;
+    }
+    for (const input of [M.cols, M.spacing, M.margin, M.name].concat(M.alignInputs)) input.disabled = locked;
+    for (const button of $$('button[data-pick="merge"]')) button.disabled = locked;
+    M.list.classList.toggle('is-locked', locked);
+    M.list.setAttribute('aria-busy', String(locked));
+    syncFrameButtons();
+    if (!locked && mergeState.stale) updateMerge();
   }
 
   function renumberTiles() {
@@ -724,20 +773,26 @@
   }
 
   function updateMerge() {
+    if (mergeState.locked) {
+      mergeState.stale = true; // nothing changes during an export; catch up afterwards
+      return;
+    }
+    mergeState.stale = false;
     const items = mergeState.items;
-    mergeState.pngBytes = null;
     M.drop.hidden = items.length > 0;
     M.stageRoot.hidden = items.length === 0;
 
     const read = readMergeOptions();
     if (!items.length) {
       mergeState.result = null;
+      exportSession.setSheet(null);
       setSummary(M.summary, read.error ? [line([read.error])] : [], !!read.error);
       setMergeExport(false);
       return;
     }
     if (read.error) {
       mergeState.result = null;
+      exportSession.setSheet(null);
       setSummary(M.summary, [line([read.error])], true);
       setMergeExport(false);
       return;
@@ -748,12 +803,14 @@
       packed = merge.packSprites(items.map((i) => i.image), read.values);
     } catch (err) {
       mergeState.result = null;
+      exportSession.setSheet(null);
       setSummary(M.summary, [line([err.message])], true);
       setMergeExport(false);
       return;
     }
     const layout = packed.layout;
     mergeState.result = { image: packed.image, layout: layout, names: items.map((i) => i.name) };
+    exportSession.setSheet(packed, mergeState.result.names);
 
     mergeStage.setImage(packed.image);
     mergeStage.setOverlay(layout.placements.map((p) => p.cell), []);
@@ -791,6 +848,7 @@
   };
 
   function moveItem(from, to) {
+    if (mergeState.locked) return;
     const items = mergeState.items;
     if (to < 0 || to >= items.length || from === to) return;
     const moved = items.splice(from, 1)[0];
@@ -800,6 +858,7 @@
   }
 
   function removeItem(id) {
+    if (mergeState.locked) return;
     const items = mergeState.items;
     const index = items.findIndex((i) => i.id === id);
     if (index < 0) return;
@@ -839,7 +898,7 @@
 
   M.list.addEventListener('pointerdown', function (e) {
     const tile = e.target.closest('.tile');
-    if (!tile || e.button !== 0 || e.target.closest('button')) return;
+    if (!tile || mergeState.locked || e.button !== 0 || e.target.closest('button')) return;
     if (e.pointerType !== 'mouse' && !e.target.closest('.tile-handle')) return;
     drag = { tile: tile, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, started: false, raf: 0 };
     // Capture on the list: the tile itself moves around the DOM while dragging.
@@ -909,6 +968,7 @@
   M.list.addEventListener('lostpointercapture', endDrag);
 
   M.sort.addEventListener('click', function () {
+    if (mergeState.locked) return;
     mergeState.items = merge.sortByName(mergeState.items);
     renderFrames();
     updateMerge();
@@ -916,6 +976,7 @@
   });
 
   M.clear.addEventListener('click', function () {
+    if (mergeState.locked) return;
     mergeState.items = [];
     renderFrames();
     updateMerge();
@@ -932,30 +993,28 @@
   });
 
   M.exportPng.addEventListener('click', async function () {
-    const result = mergeState.result;
-    if (!result || mergeState.encoding) return;
-    mergeState.encoding = true;
+    scheduleMerge.flush();
+    if (!mergeState.result || exportSession.busy) return;
+    const task = exportSession.png(outputName());
+    setMergeLocked(true);
     M.exportPng.disabled = true;
     M.exportPng.textContent = 'Encoding…';
     try {
-      const bytes = mergeState.pngBytes || (await png.encodePng(result.image));
-      if (mergeState.result === result) mergeState.pngBytes = bytes;
-      saveFile(bytes, outputName() + '.png', 'image/png');
+      const file = await task;
+      saveFile(file.data, file.name, 'image/png');
     } catch (err) {
       notify('Export failed: ' + err.message, 'error');
     } finally {
-      mergeState.encoding = false;
+      setMergeLocked(false);
       M.exportPng.textContent = 'Download PNG';
       M.exportPng.disabled = !mergeState.result;
     }
   });
 
   M.exportJson.addEventListener('click', function () {
-    const result = mergeState.result;
-    if (!result) return;
-    const name = outputName();
-    const atlas = merge.buildAtlas(result.names, result.layout, name + '.png');
-    saveFile(merge.stringifyAtlas(atlas), name + '.json', 'application/json');
+    scheduleMerge.flush();
+    const file = exportSession.json(outputName());
+    if (file) saveFile(file.text, file.name, 'application/json');
   });
 
   // -------------------------------------------------------------------- tabs
@@ -994,7 +1053,8 @@
 
   document.addEventListener('click', function (e) {
     const picker = e.target.closest('[data-pick]');
-    if (picker) (picker.dataset.pick === 'merge' ? M.input : S.input).click();
+    if (!picker || picker.disabled) return;
+    (picker.dataset.pick === 'merge' ? M.input : S.input).click();
   });
 
   const overlay = $('#drop-overlay');

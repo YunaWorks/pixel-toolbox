@@ -324,6 +324,12 @@ input[type="text"]:focus {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+input:disabled,
+.segmented input:disabled + label {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 input[aria-invalid="true"] {
   border-color: var(--danger);
   box-shadow: 0 0 0 3px var(--danger-soft);
@@ -796,6 +802,16 @@ input[aria-invalid="true"] {
 .frame-list.is-sorting,
 .frame-list.is-sorting .tile {
   cursor: grabbing;
+}
+
+/* While a sheet is being exported, the frames can't be changed. */
+.frame-list.is-locked .tile {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.frame-list.is-locked .tile-remove {
+  display: none;
 }
 
 .tile-handle {

@@ -57,7 +57,7 @@ test('rejects entries without a name', () => {
 
 const hasUnzip = spawnSync('unzip', ['-v']).status === 0;
 
-test('the system unzip tool accepts the archive', { skip: !hasUnzip && 'unzip is not installed' }, () => {
+test('the system unzip tool accepts the archive', { skip: !hasUnzip && 'unzip is not available' }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-toolbox-zip-'));
   try {
     const file = path.join(dir, 'frames.zip');

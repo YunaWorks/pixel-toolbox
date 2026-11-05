@@ -7,6 +7,11 @@
  * (greyscale, RGB, palette, with or without alpha, 1–16 bits, interlaced).
  * 16-bit samples are rounded to 8 bits.
  *
+ * Every chunk that affects the pixels (IHDR, PLTE, tRNS, IDAT) is checked
+ * against its CRC. A damaged file is refused with a clear message instead of
+ * being decoded with silently wrong colours. Other chunks (text, colour
+ * profiles…) are not used, so they are skipped without checking.
+ *
  * Encoding always writes 8-bit RGBA, non-interlaced.
  *
  * Compression uses the browser's built-in CompressionStream /
@@ -47,10 +52,18 @@
     6: [8, 16],
   };
 
+  // Chunks whose contents change the decoded pixels.
+  const CHECKED_CHUNKS = ['IHDR', 'PLTE', 'tRNS', 'IDAT'];
+
+  /**
+   * `damaged` is true when the file itself is broken (checksum mismatch,
+   * cut off): such a file must not be decoded "as well as possible".
+   */
   class PngError extends Error {
-    constructor(message) {
+    constructor(message, damaged) {
       super(message);
       this.name = 'PngError';
+      this.damaged = !!damaged;
     }
   }
 
@@ -76,7 +89,7 @@
     try {
       return await pipe(bytes, new DecompressionStream('deflate'));
     } catch (err) {
-      throw new PngError('The PNG image data is damaged and cannot be read.');
+      throw new PngError('The PNG image data could not be decompressed.');
     }
   }
 
@@ -139,13 +152,23 @@
       const type = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
       const start = pos + 8;
       const end = start + length;
-      if (end > bytes.length) {
-        if (type === 'IDAT' || !result.header) throw new PngError('The PNG file is incomplete.');
-        break; // a damaged trailing ancillary chunk: ignore it
+      const checked = CHECKED_CHUNKS.indexOf(type) >= 0;
+      if (end + 4 > bytes.length) {
+        if (checked || !result.header) {
+          throw new PngError('This PNG file is incomplete (it may not have finished saving or downloading).', true);
+        }
+        break; // a cut-off chunk that doesn't affect the pixels: ignore it
+      }
+      if (checked && crc32(bytes, pos + 4, end) !== readUint32(bytes, end)) {
+        throw new PngError(
+          'This PNG file is damaged: its ' + type + ' data does not match its checksum (CRC), ' +
+          'so the pixels can’t be trusted. Please export the image again.',
+          true
+        );
       }
       const body = bytes.subarray(start, end);
       if (type === 'IHDR') {
-        if (length < 13) throw new PngError('The PNG header is damaged.');
+        if (length < 13) throw new PngError('This PNG file is damaged: its header is too short.', true);
         result.header = {
           width: readUint32(body, 0),
           height: readUint32(body, 4),
@@ -360,7 +383,9 @@
       if (passWidth === 0 || passHeight === 0) continue;
       const rowBytes = (passWidth * bitsPerPixel + 7) >> 3;
       const needed = (rowBytes + 1) * passHeight;
-      if (offset + needed > raw.length) throw new PngError('The PNG image data is incomplete.');
+      if (offset + needed > raw.length) {
+        throw new PngError('This PNG file is damaged: it contains less image data than its size needs.', true);
+      }
       const rows = unfilter(raw, offset, rowBytes, passHeight, bpp);
       offset += needed;
       writePass(image.data, h.width, rows, rowBytes, passWidth, passHeight, pass, info);

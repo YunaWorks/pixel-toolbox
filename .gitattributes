@@ -1,0 +1,2 @@
+# Keep binary test fixtures and images byte-for-byte on every platform.
+*.png binary

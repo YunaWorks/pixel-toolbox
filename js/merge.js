@@ -221,6 +221,77 @@
     return format(atlas, '') + '\n';
   }
 
+  /**
+   * Keeps the two downloads of a merged sheet (PNG and JSON) in step, so they
+   * always describe the same layout.
+   *
+   *   setSheet(packed, names) – the sheet to export (a packSprites() result and
+   *                             the frame names). Refused (returns false) while
+   *                             a PNG export is running.
+   *   png(baseName)           – encodes the sheet; resolves to { name, data }.
+   *   json(baseName)          – { name, text } for the same sheet. During a PNG
+   *                             export it describes the sheet being exported,
+   *                             under that export's name.
+   *   busy                    – true while a PNG export is running.
+   *
+   * @param {(image) => Promise<Uint8Array>} encode PNG encoder
+   */
+  function createExportSession(encode) {
+    let sheet = null; // { packed, names, data }
+    let job = null; // { baseName, pngName, jsonName, json } for `sheet`
+    let running = null; // the PNG export in progress
+
+    function jobFor(baseName) {
+      if (running) return job;
+      if (!sheet) return null;
+      if (!job || job.baseName !== baseName) {
+        const pngName = baseName + '.png';
+        job = {
+          baseName: baseName,
+          pngName: pngName,
+          jsonName: baseName + '.json',
+          json: stringifyAtlas(buildAtlas(sheet.names, sheet.packed.layout, pngName)),
+        };
+      }
+      return job;
+    }
+
+    return {
+      get busy() {
+        return running !== null;
+      },
+
+      setSheet: function (packed, names) {
+        if (running) return false;
+        sheet = packed ? { packed: packed, names: names.slice(), data: null } : null;
+        job = null;
+        return true;
+      },
+
+      png: function (baseName) {
+        if (running) return Promise.reject(new Error('An export is already running.'));
+        const current = jobFor(baseName);
+        if (!current) return Promise.reject(new Error('There is nothing to export.'));
+        const target = sheet;
+        const task = Promise.resolve()
+          .then(function () { return target.data || encode(target.packed.image); })
+          .then(function (data) {
+            target.data = data; // same layout → reuse the encoded file
+            return { name: current.pngName, data: data };
+          });
+        running = task;
+        const finish = function () { if (running === task) running = null; };
+        task.then(finish, finish);
+        return task;
+      },
+
+      json: function (baseName) {
+        const current = jobFor(baseName);
+        return current ? { name: current.jsonName, text: current.json } : null;
+      },
+    };
+  }
+
   return {
     APP_NAME: APP_NAME,
     APP_VERSION: APP_VERSION,
@@ -230,5 +301,6 @@
     packSprites: packSprites,
     buildAtlas: buildAtlas,
     stringifyAtlas: stringifyAtlas,
+    createExportSession: createExportSession,
   };
 });

@@ -36,6 +36,8 @@ It works on GitHub Pages, and it works offline from a downloaded copy.
    and smaller frames are either **centered** or placed **on the bottom** edge of their
    cell (centered horizontally), which keeps a character's feet on the same line.
 5. Click **Download PNG** for the sheet and **Download JSON** for the frame data.
+   Both always describe the same layout: while the PNG is being prepared, the frames and
+   layout settings are locked.
 
 Pixels are always copied 1:1. There is no smoothing, no resampling and no interpolation,
 and the zoomed preview uses nearest-neighbour scaling so pixels stay sharp.
@@ -141,6 +143,8 @@ Firefox 113+ and Safari 16.4+.
   transparency, 1 to 16 bits per channel, interlaced). 16-bit images are reduced to 8 bits
   per channel. The colour values stored in the file are kept exactly, including those of
   semi-transparent pixels; no colour-profile conversion is applied.
+- Damaged PNG files are refused with a message instead of being decoded with wrong colours:
+  every part of the file that affects the pixels is checked against its checksum (CRC).
 - Output files are 8-bit RGBA PNG.
 - A cell is “empty” only if every pixel in it has alpha 0.
 - Grid by cell size: every whole cell that fits after the margin is used. Grid by rows &
@@ -160,7 +164,8 @@ index.html        the page
 css/style.css     styles
 js/app.js         user interface
 js/split.js       splitting: grid, empty cells, file names, ZIP export
-js/merge.js       merging: natural sort, layout, packing, JSON
+js/merge.js       merging: natural sort, layout, packing, JSON, export
+js/latest.js      keeps only the newest of overlapping file loads
 js/png.js         PNG decoder and encoder
 js/zip.js         ZIP writer
 js/raster.js      pixel copy helpers
@@ -168,15 +173,21 @@ js/crc32.js       CRC-32 checksum
 tests/            automated tests (Node.js built-in test runner)
 ```
 
-Run the tests with Node.js 20.15 or newer:
+Run the tests with Node.js 20.15 or newer, on Windows, macOS or Linux:
 
 ```bash
 npm test
 ```
 
+`npm test` runs `tests/run.js`, which loads every `*.test.js` file in a single process.
+It doesn't start child processes, so it also works on Windows setups where
+`node --test` fails with `spawn EPERM`.
+
 The tests cover the splitting and merging logic, the PNG decoder (against files written by
-other PNG encoders in every PNG format, see `tests/fixtures/`), the PNG encoder and the ZIP
-writer.
+other PNG encoders in every PNG format, see `tests/fixtures/`, and against damaged files),
+the PNG encoder, the ZIP writer, and the two export situations that used to go wrong:
+changing the layout while a sheet is being exported, and choosing a second file before the
+first one has finished loading.
 
 ### Third-party code
 

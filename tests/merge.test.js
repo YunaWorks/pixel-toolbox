@@ -165,3 +165,100 @@ test('a single frame produces a sheet of exactly that frame', () => {
   const { image } = merge.packSprites([frame], { columns: 4 });
   assert.ok(sameImage(image, frame));
 });
+
+// ------------------------------------------------------------------- export
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+/** Checks that every frame listed in the JSON is found at its position in the PNG. */
+async function assertPngMatchesJson(pngBytes, jsonText, framesByName) {
+  const sheet = await png.decodePng(pngBytes);
+  const atlas = JSON.parse(jsonText);
+  assert.deepEqual([sheet.width, sheet.height], [atlas.meta.size.w, atlas.meta.size.h], 'sheet size');
+  for (const f of atlas.frames) {
+    const crop = referenceCrop(sheet, f.frame.x, f.frame.y, f.frame.w, f.frame.h);
+    assert.ok(sameImage(crop, framesByName[f.filename]), `${f.filename} is where the JSON says`);
+  }
+  return atlas;
+}
+
+const EXPORT_FRAMES = [noiseImage(16, 16, 11), noiseImage(9, 13, 12), noiseImage(16, 5, 13)];
+const EXPORT_NAMES = ['a.png', 'b.png', 'c.png'];
+const EXPORT_BY_NAME = { 'a.png': EXPORT_FRAMES[0], 'b.png': EXPORT_FRAMES[1], 'c.png': EXPORT_FRAMES[2] };
+
+test('export: changing the layout while the PNG is encoding cannot make PNG and JSON disagree', async () => {
+  const gate = deferred();
+  const session = merge.createExportSession(async (image) => {
+    await gate.promise; // a slow encode, so the user has time to change things
+    return png.encodePng(image);
+  });
+  assert.equal(session.setSheet(merge.packSprites(EXPORT_FRAMES, { columns: 3, align: 'bottom' }), EXPORT_NAMES), true);
+
+  // The user clicks "Download PNG"…
+  const pngTask = session.png('sheet');
+  assert.equal(session.busy, true);
+
+  // …then, before it is ready, changes the layout and the order of the frames.
+  const changed = merge.packSprites(EXPORT_FRAMES.slice().reverse(), { columns: 1, spacing: 4 });
+  assert.equal(session.setSheet(changed, EXPORT_NAMES.slice().reverse()), false, 'layout is locked during the export');
+
+  // A JSON download during the export belongs to that export (same layout, same name).
+  const jsonDuring = session.json('typed-a-new-name');
+  assert.equal(jsonDuring.name, 'sheet.json');
+
+  gate.resolve();
+  const pngFile = await pngTask;
+  assert.equal(session.busy, false);
+  assert.equal(pngFile.name, 'sheet.png');
+
+  // A JSON download after the export still matches the PNG that was saved.
+  const jsonAfter = session.json('sheet');
+  assert.equal(jsonAfter.text, jsonDuring.text);
+  const atlas = await assertPngMatchesJson(pngFile.data, jsonAfter.text, EXPORT_BY_NAME);
+  assert.equal(atlas.meta.image, 'sheet.png');
+  assert.equal(atlas.meta.grid.columns, 3);
+});
+
+test('export: after the export, a new layout is accepted and both files follow it', async () => {
+  const session = merge.createExportSession(png.encodePng);
+  session.setSheet(merge.packSprites(EXPORT_FRAMES, { columns: 3 }), EXPORT_NAMES);
+  const first = await session.png('sheet');
+
+  assert.equal(session.setSheet(merge.packSprites(EXPORT_FRAMES, { columns: 1, margin: 2 }), EXPORT_NAMES), true);
+  const second = await session.png('sheet');
+  const json = session.json('sheet');
+  const atlas = await assertPngMatchesJson(second.data, json.text, EXPORT_BY_NAME);
+  assert.equal(atlas.meta.grid.columns, 1);
+  assert.notDeepEqual(first.data, second.data);
+});
+
+test('export: the PNG is encoded once per layout, and errors leave the session usable', async () => {
+  let calls = 0;
+  let fail = true;
+  const session = merge.createExportSession((image) => {
+    calls++;
+    if (fail) return Promise.reject(new Error('disk full'));
+    return png.encodePng(image);
+  });
+  assert.equal(session.json('x'), null, 'nothing to export yet');
+  await assert.rejects(session.png('x'), /nothing to export/);
+
+  session.setSheet(merge.packSprites(EXPORT_FRAMES, { columns: 2 }), EXPORT_NAMES);
+  await assert.rejects(session.png('x'), /disk full/);
+  assert.equal(session.busy, false);
+
+  fail = false;
+  const a = await session.png('x');
+  const b = await session.png('renamed');
+  assert.equal(b.name, 'renamed.png');
+  assert.equal(a.data, b.data, 'same layout → same encoded bytes');
+  assert.equal(calls, 2);
+  assert.equal(JSON.parse(session.json('renamed').text).meta.image, 'renamed.png');
+
+  assert.equal(session.setSheet(null), true);
+  assert.equal(session.json('x'), null);
+});
