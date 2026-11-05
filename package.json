@@ -1,0 +1,19 @@
+{
+  "name": "pixel-toolbox",
+  "version": "1.0.0",
+  "description": "Split and merge sprite sheets in your browser. A static web tool for pixel artists and 2D game developers.",
+  "private": true,
+  "license": "MIT",
+  "author": "YunaWorks",
+  "homepage": "https://github.com/YunaWorks/pixel-toolbox",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YunaWorks/pixel-toolbox.git"
+  },
+  "engines": {
+    "node": ">=20.15"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

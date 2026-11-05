@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- The page's scripts may not make network requests: images stay on this device. -->
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Pixel Toolbox · Sprite Sheet Splitter &amp; Merger</title>
+  <meta name="description" content="Split a sprite sheet into frames, or merge frames into a sprite sheet. Runs entirely in your browser; images are never uploaded.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='7' height='7' fill='%236c5cff'/%3E%3Crect x='9' width='7' height='7' fill='%23ff3ea5'/%3E%3Crect y='9' width='7' height='7' fill='%2322c3a6'/%3E%3Crect x='9' y='9' width='7' height='7' fill='%23ffc23d'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="browser-warning" id="browser-warning" role="alert" hidden>
+    This browser is missing features Pixel Toolbox needs. Please open it in a current version of Chrome, Edge, Firefox or Safari.
+  </div>
+
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Pixel Toolbox home">
+      <svg class="brand-logo" viewBox="0 0 16 16" aria-hidden="true" shape-rendering="crispEdges">
+        <rect width="7" height="7" fill="#6c5cff"/><rect x="9" width="7" height="7" fill="#ff3ea5"/>
+        <rect y="9" width="7" height="7" fill="#22c3a6"/><rect x="9" y="9" width="7" height="7" fill="#ffc23d"/>
+      </svg>
+      <span>Pixel Toolbox</span>
+    </a>
+
+    <div class="tabs" role="tablist" aria-label="Tool">
+      <button class="tab" type="button" role="tab" id="tab-split" data-tab="split" aria-controls="panel-split" aria-selected="true">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 1h14v14H1zM8 1v14M1 8h14" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        Split sheet
+      </button>
+      <button class="tab" type="button" role="tab" id="tab-merge" data-tab="merge" aria-controls="panel-merge" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 3h5v5H1zM10 3h5v5h-5zM1 11h14" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        Merge frames
+      </button>
+    </div>
+
+    <p class="privacy">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 7V5a4 4 0 0 1 8 0v2M3 7h10v8H3z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      Your images never leave this browser
+    </p>
+  </header>
+
+  <main>
+    <!-- ===================================================== SPLIT -->
+    <section class="workspace" id="panel-split" role="tabpanel" aria-labelledby="tab-split">
+      <aside class="sidebar">
+        <section class="step">
+          <h2><span class="step-num">1</span> Sprite sheet</h2>
+          <div class="file-card" id="split-file-card" hidden>
+            <div class="file-name" id="split-file-name"></div>
+            <div class="file-meta" id="split-file-meta"></div>
+          </div>
+          <p class="muted" id="split-file-empty">No image yet. Drop a PNG on the page or choose one.</p>
+          <button class="btn" type="button" data-pick="split" id="split-pick">Choose PNG…</button>
+        </section>
+
+        <section class="step">
+          <h2><span class="step-num">2</span> Grid</h2>
+          <div class="field">
+            <span class="field-label" id="split-mode-label">Slice by</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="split-mode-label">
+              <input type="radio" name="split-mode" id="split-mode-size" value="size" checked>
+              <label for="split-mode-size">Cell size</label>
+              <input type="radio" name="split-mode" id="split-mode-count" value="count">
+              <label for="split-mode-count">Rows &amp; columns</label>
+            </div>
+          </div>
+
+          <div class="field-grid" data-split-mode="size">
+            <label class="field"><span class="field-label">Cell width <small>px</small></span>
+              <input type="number" id="split-cell-w" min="1" step="1" value="32" inputmode="numeric"></label>
+            <label class="field"><span class="field-label">Cell height <small>px</small></span>
+              <input type="number" id="split-cell-h" min="1" step="1" value="32" inputmode="numeric"></label>
+          </div>
+          <div class="field-grid" data-split-mode="count" hidden>
+            <label class="field"><span class="field-label">Columns</span>
+              <input type="number" id="split-cols" min="1" step="1" value="4" inputmode="numeric"></label>
+            <label class="field"><span class="field-label">Rows</span>
+              <input type="number" id="split-rows" min="1" step="1" value="4" inputmode="numeric"></label>
+          </div>
+          <div class="field-grid">
+            <label class="field" title="Empty border around the whole sheet"><span class="field-label">Margin <small>px</small></span>
+              <input type="number" id="split-margin" min="0" step="1" value="0" inputmode="numeric"></label>
+            <label class="field" title="Gap between neighbouring cells"><span class="field-label">Spacing <small>px</small></span>
+              <input type="number" id="split-spacing" min="0" step="1" value="0" inputmode="numeric"></label>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="split-skip-empty" checked>
+            <span>Skip empty cells <small class="muted">(every pixel fully transparent)</small></span>
+          </label>
+          <div class="summary" id="split-summary" aria-live="polite"></div>
+        </section>
+
+        <section class="step">
+          <h2><span class="step-num">3</span> File names</h2>
+          <label class="field"><span class="field-label">Prefix</span>
+            <input type="text" id="split-prefix" value="frame_" spellcheck="false" autocomplete="off"></label>
+          <div class="field-grid">
+            <label class="field"><span class="field-label">Start at</span>
+              <input type="number" id="split-start" min="0" step="1" value="1" inputmode="numeric"></label>
+            <label class="field" title="Numbers are padded with zeros to this many digits"><span class="field-label">Digits</span>
+              <input type="number" id="split-digits" min="1" max="6" step="1" value="2" inputmode="numeric"></label>
+          </div>
+          <p class="names-preview" id="split-names"></p>
+        </section>
+
+        <section class="step step-export">
+          <h2><span class="step-num">4</span> Export</h2>
+          <button class="btn btn-primary btn-block" type="button" id="split-export" disabled>Download ZIP</button>
+          <p class="muted small">One PNG file per cell, packed into a ZIP file.</p>
+        </section>
+      </aside>
+
+      <div class="main-col">
+        <div class="dropzone" id="split-drop" data-pick="split">
+          <svg class="dropzone-art" viewBox="0 0 24 18" aria-hidden="true" shape-rendering="crispEdges">
+            <path d="M0 0h24v18H0z" class="dz-frame"/>
+            <path d="M2 2h6v6H2zM9 2h6v6H9zM16 2h6v6h-6zM2 10h6v6H2zM9 10h6v6H9z" class="dz-cells"/>
+            <path d="M16 10h6v6h-6z" class="dz-empty"/>
+          </svg>
+          <h3>Drop a sprite sheet here</h3>
+          <p>A PNG image with frames laid out on a grid.</p>
+          <button class="btn btn-primary" type="button" data-pick="split">Choose a PNG file</button>
+          <p class="muted small">The image is processed on this device and never uploaded.</p>
+        </div>
+
+        <div class="stage" id="split-stage" hidden>
+          <div class="stage-toolbar">
+            <div class="zoom" role="group" aria-label="Zoom">
+              <button class="btn btn-icon" type="button" data-zoom="out" aria-label="Zoom out" title="Zoom out">−</button>
+              <span class="zoom-label" data-zoom-label aria-live="polite">1×</span>
+              <button class="btn btn-icon" type="button" data-zoom="in" aria-label="Zoom in" title="Zoom in">+</button>
+              <button class="btn btn-sm" type="button" data-zoom="fit" title="Fit the image in the view">Fit</button>
+            </div>
+            <ul class="legend">
+              <li><span class="swatch swatch-grid"></span>Cell</li>
+              <li><span class="swatch swatch-skip"></span>Empty, skipped</li>
+              <li><span class="swatch swatch-dim"></span>Not used</li>
+            </ul>
+          </div>
+          <div class="stage-viewport">
+            <div class="stage-canvas">
+              <canvas></canvas>
+              <svg class="stage-overlay" preserveAspectRatio="none" aria-hidden="true">
+                <path class="ov-dim" fill-rule="evenodd"/>
+                <path class="ov-skip"/>
+                <path class="ov-cross"/>
+                <path class="ov-grid"/>
+                <rect class="ov-hover" width="0" height="0"/>
+              </svg>
+            </div>
+          </div>
+          <div class="stage-status">Point at the image to inspect a cell.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== MERGE -->
+    <section class="workspace" id="panel-merge" role="tabpanel" aria-labelledby="tab-merge" hidden>
+      <aside class="sidebar">
+        <section class="step">
+          <h2><span class="step-num">1</span> Frames <span class="count-badge" id="merge-count">0</span></h2>
+          <div class="button-row">
+            <button class="btn" type="button" data-pick="merge">Add PNGs…</button>
+            <button class="btn btn-ghost" type="button" id="merge-sort" disabled>Sort by name</button>
+            <button class="btn btn-ghost" type="button" id="merge-clear" disabled>Clear</button>
+          </div>
+          <p class="muted small" id="merge-hint">Files are sorted by name (walk_2 before walk_10). Drag a frame to move it.</p>
+          <ol class="frame-list" id="merge-list" aria-label="Frames in order"></ol>
+        </section>
+
+        <section class="step">
+          <h2><span class="step-num">2</span> Layout</h2>
+          <label class="field"><span class="field-label">Frames per row</span>
+            <input type="number" id="merge-cols" min="1" step="1" value="8" inputmode="numeric"></label>
+          <div class="field-grid">
+            <label class="field" title="Gap between neighbouring cells"><span class="field-label">Spacing <small>px</small></span>
+              <input type="number" id="merge-spacing" min="0" step="1" value="0" inputmode="numeric"></label>
+            <label class="field" title="Empty border around the whole sheet"><span class="field-label">Margin <small>px</small></span>
+              <input type="number" id="merge-margin" min="0" step="1" value="0" inputmode="numeric"></label>
+          </div>
+          <div class="field">
+            <span class="field-label" id="merge-align-label">Smaller frames sit</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="merge-align-label">
+              <input type="radio" name="merge-align" id="merge-align-center" value="center" checked>
+              <label for="merge-align-center">Centered</label>
+              <input type="radio" name="merge-align" id="merge-align-bottom" value="bottom">
+              <label for="merge-align-bottom">On the bottom</label>
+            </div>
+          </div>
+          <p class="muted small">Every cell is as big as the largest frame. “On the bottom” keeps characters’ feet on the same line.</p>
+          <div class="summary" id="merge-summary" aria-live="polite"></div>
+        </section>
+
+        <section class="step step-export">
+          <h2><span class="step-num">3</span> Export</h2>
+          <label class="field"><span class="field-label">File name</span>
+            <input type="text" id="merge-name" value="spritesheet" spellcheck="false" autocomplete="off"></label>
+          <div class="button-row">
+            <button class="btn btn-primary" type="button" id="merge-export-png" disabled>Download PNG</button>
+            <button class="btn" type="button" id="merge-export-json" disabled>Download JSON</button>
+          </div>
+          <p class="muted small">The JSON file lists every frame’s name, position and size in the sheet.</p>
+        </section>
+      </aside>
+
+      <div class="main-col">
+        <div class="dropzone" id="merge-drop" data-pick="merge">
+          <svg class="dropzone-art" viewBox="0 0 24 18" aria-hidden="true" shape-rendering="crispEdges">
+            <path d="M1 4h6v6H1zM9 2h6v6H9zM17 5h6v6h-6z" class="dz-cells"/>
+            <path d="M0 13h24v5H0z" class="dz-frame"/>
+          </svg>
+          <h3>Drop PNG frames here</h3>
+          <p>Select several images at once. They can have different sizes.</p>
+          <button class="btn btn-primary" type="button" data-pick="merge">Choose PNG files</button>
+          <p class="muted small">The images are processed on this device and never uploaded.</p>
+        </div>
+
+        <div class="stage" id="merge-stage" hidden>
+          <div class="stage-toolbar">
+            <div class="zoom" role="group" aria-label="Zoom">
+              <button class="btn btn-icon" type="button" data-zoom="out" aria-label="Zoom out" title="Zoom out">−</button>
+              <span class="zoom-label" data-zoom-label aria-live="polite">1×</span>
+              <button class="btn btn-icon" type="button" data-zoom="in" aria-label="Zoom in" title="Zoom in">+</button>
+              <button class="btn btn-sm" type="button" data-zoom="fit" title="Fit the sheet in the view">Fit</button>
+            </div>
+            <ul class="legend">
+              <li><span class="swatch swatch-grid"></span>Cell</li>
+              <li><span class="swatch swatch-dim"></span>Margin / spacing</li>
+            </ul>
+          </div>
+          <div class="stage-viewport">
+            <div class="stage-canvas">
+              <canvas></canvas>
+              <svg class="stage-overlay" preserveAspectRatio="none" aria-hidden="true">
+                <path class="ov-dim" fill-rule="evenodd"/>
+                <path class="ov-skip"/>
+                <path class="ov-cross"/>
+                <path class="ov-grid"/>
+                <rect class="ov-hover" width="0" height="0"/>
+              </svg>
+            </div>
+          </div>
+          <div class="stage-status">Point at the sheet to see which frame is where.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Pixel Toolbox 1.0.0</span>
+    <span aria-hidden="true">·</span>
+    <span>Runs locally. No uploads, no tracking.</span>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/YunaWorks/pixel-toolbox" rel="noopener">Source code (MIT License)</a>
+  </footer>
+
+  <div class="drop-overlay" id="drop-overlay" hidden><div class="drop-overlay-box" id="drop-overlay-text">Drop to load</div></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <input type="file" id="split-input" accept="image/png,.png" hidden>
+  <input type="file" id="merge-input" accept="image/png,.png" multiple hidden>
+
+  <script src="js/crc32.js"></script>
+  <script src="js/raster.js"></script>
+  <script src="js/png.js"></script>
+  <script src="js/zip.js"></script>
+  <script src="js/split.js"></script>
+  <script src="js/merge.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
